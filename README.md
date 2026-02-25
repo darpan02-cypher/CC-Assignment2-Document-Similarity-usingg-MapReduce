@@ -7,13 +7,22 @@
 ## Approach and Implementation
 
 ### Mapper Design
-[Explain the logic of your Mapper class. What is its input key-value pair? What does it emit as its output key-value pair? How does it help in solving the overall problem?]
+The `DocumentSimilarityMapper` reads lines from the input text file. Each line is assumed to start with a `DocID` followed by document text. 
+- **Input**: `(LongWritable, Text)` - byte offset and line content.
+- **Process**: It tokenizes the text into words, converts them to lowercase, and removes non-alphanumeric characters.
+- **Output**: `(SIMILARITY_KEY, docId:word1,word2,...)`. It emits a constant key `SIMILARITY_KEY` so that all document word sets are sent to the same reducer for pair-wise comparison.
 
 ### Reducer Design
-[Explain the logic of your Reducer class. What is its input key-value pair? How does it process the values for a given key? What does it emit as the final output? How do you calculate the Jaccard Similarity here?]
+The `DocumentSimilarityReducer` receives all documents under the `SIMILARITY_KEY`.
+- **Input**: `(SIMILARITY_KEY, Iterable<docId:word1,word2,...>)`.
+- **Process**: It parses the values into a list of document objects (ID and word set). It then performs a nested loop to calculate the Jaccard Similarity for every unique pair of documents using the formula: `Intersection Size / Union Size`.
+- **Output**: `("DocID1, DocID2 Similarity: X.XX", "")`.
 
 ### Overall Data Flow
-[Describe how data flows from the initial input files, through the Mapper, shuffle/sort phase, and the Reducer to produce the final output.]
+1. **Input Stage**: Data is read from HDFS (e.g., `small_dataset.txt`).
+2. **Map Stage**: Mapper tokenizes words and groups all docs under a single key.
+3. **Shuffle/Sort**: Hadoop groups all document word sets together by the common key.
+4. **Reduce Stage**: Reducer receives the full list of documents, computes Jaccard similarity for all pairs, and writes formatted results to HDFS.
 
 ---
 
@@ -42,7 +51,7 @@ mvn clean package
 Copy the JAR file to the Hadoop ResourceManager container:
 
 ```bash
-docker cp target/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
+docker cp target/DocumentSimilarity-0.0.1-SNAPSHOT.jar resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
 ```
 
 ### 5. **Move Dataset to Docker Container**
@@ -50,7 +59,7 @@ docker cp target/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar resourcemanager:/opt/ha
 Copy the dataset to the Hadoop ResourceManager container:
 
 ```bash
-docker cp shared-folder/input/data/input.txt resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
+docker cp shared-folder/input/data/small_dataset.txt resourcemanager:/opt/hadoop-3.2.1/share/hadoop/mapreduce/
 ```
 
 ### 6. **Connect to Docker Container**
@@ -78,7 +87,7 @@ hadoop fs -mkdir -p /input/data
 Copy the input dataset to the HDFS folder:
 
 ```bash
-hadoop fs -put ./input.txt /input/data
+hadoop fs -put ./small_dataset.txt /input/data
 ```
 
 ### 8. **Execute the MapReduce Job**
@@ -86,7 +95,7 @@ hadoop fs -put ./input.txt /input/data
 Run your MapReduce job using the following command: Here I got an error saying output already exists so I changed it to output1 instead as destination folder
 
 ```bash
-hadoop jar /opt/hadoop-3.2.1/share/hadoop/mapreduce/WordCountUsingHadoop-0.0.1-SNAPSHOT.jar com.example.controller.Controller /input/data/input.txt /output1
+hadoop jar /opt/hadoop-3.2.1/share/hadoop/mapreduce/DocumentSimilarity-0.0.1-SNAPSHOT.jar com.example.controller.DocumentSimilarityDriver /input/data/small_dataset.txt /output1
 ```
 
 ### 9. **View the Output**
@@ -120,7 +129,14 @@ To copy the output from HDFS to your local machine:
 
 ## Challenges and Solutions
 
-[Describe any challenges you faced during this assignment. This could be related to the algorithm design (e.g., how to generate pairs), implementation details (e.g., data structures, debugging in Hadoop), or environmental issues. Explain how you overcame these challenges.]
+1. **Docker Container Conflicts**: Existing containers with same names were preventing cluster startup.
+   - **Solution**: Performed a full cleanup using `docker rm -f` on conflicting IDs.
+2. **Local Memory OOM (Exit 137)**: The full cluster with 9 containers was too heavy for local laptop RAM.
+   - **Solution**: Scaled down to a single-node cluster (1 DataNode, 1 NodeManager) in `docker-compose.yml` and reduced memory settings in `hadoop.env`.
+3. **Queue Mapping Error**: Job submission failed with "unknown queue: default".
+   - **Solution**: Switched from `CapacityScheduler` to `FifoScheduler` for simpler local testing.
+4. **HDFS Hostname Resolution**: DataNode upload failed with `UnresolvedAddressException`.
+   - **Solution**: Configured `dfs.client.use.datanode.hostname=true` in `hadoop.env`.
 
 ---
 ## Sample Input
@@ -139,4 +155,12 @@ Document3 Sample text with different words
 "Document1, Document3 Similarity: 0.42"
 "Document2, Document3 Similarity: 0.50"
 ```
-## Obtained Output: (Place your obtained output here.)
+## Obtained Output:
+```text
+"Document4, Document3 Similarity: 0.50" 
+"Document4, Document2 Similarity: 0.18" 
+"Document4, Document1 Similarity: 0.40" 
+"Document3, Document2 Similarity: 0.10" 
+"Document3, Document1 Similarity: 0.20" 
+"Document2, Document1 Similarity: 0.18"
+```
